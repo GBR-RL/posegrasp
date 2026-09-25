@@ -1,0 +1,24 @@
+# Environments and caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data and results (downloaded or generated; never committed)
+data/raw/
+data/lmo/
+data/detections/
+results/
+
+# ROS 2 build trees
+build/
+install/
+log/
+
+# IDEs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
