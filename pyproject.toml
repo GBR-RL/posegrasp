@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "posegrasp"
+version = "0.1.0"
+description = "6-DoF pose estimation to grasping, measured on the BOP LM-O benchmark, as ROS 2 nodes"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Rohiith Gettala Balachandar" }]
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.12",
+  "opencv-contrib-python-headless>=4.9",
+  "open3d>=0.18",
+  "trimesh>=4.0",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.3",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.8"]
+sim = ["mujoco>=3.2"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+posegrasp = "posegrasp.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/posegrasp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["ros"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "PL", "PT", "RET", "C4"]
+# many-args APIs, magic numbers in geometry, lazy imports, math names (R, K, X) in geometry code
+ignore = ["PLR0913", "PLR2004", "PLC0415", "N803", "N806"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/posegrasp/cli.py" = ["PLR0917"]  # Typer maps parameters to CLI flags
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
+files = ["src/posegrasp"]
+
+[[tool.mypy.overrides]]
+module = ["open3d.*", "cv2.*", "trimesh.*", "mujoco.*"]
+follow_imports = "skip"
+follow_untyped_imports = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["dataset: needs the downloaded LM-O data (skipped when missing)"]
