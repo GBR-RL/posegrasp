@@ -67,5 +67,69 @@ def info(data_dir: DataDirOpt = None) -> None:
     typer.echo(json.dumps(summary, indent=2))
 
 
+def _dev_split(targets: list, every: int = 10) -> tuple[list, list]:  # type: ignore[type-arg]
+    """Development images (every `every`-th targeted image) and the rest."""
+    images = sorted({(t.scene_id, t.im_id) for t in targets})
+    dev = set(images[::every])
+    return [t for t in targets if (t.scene_id, t.im_id) in dev], targets
+
+
+@app.command("eval")
+def evaluate(
+    estimator: Annotated[str, typer.Option(help="fpfh | ppf")] = "fpfh",
+    condition: Annotated[str, typer.Option(help="gt | gdrnpp | cnos")] = "gt",
+    subset: Annotated[str, typer.Option(help="dev (20 images) | all (200 images)")] = "dev",
+    selection: Annotated[str, typer.Option(help="score | verify (depth verification)")] = "score",
+    restarts: Annotated[int, typer.Option(help="FPFH: RANSAC restarts (hypotheses)")] = 1,
+    shard: Annotated[str | None, typer.Option(help="INDEX/COUNT of the targeted images")] = None,
+    limit: Annotated[int | None, typer.Option(help="Only the first N targets")] = None,
+    data_dir: DataDirOpt = None,
+    results_dir: Annotated[Path | None, typer.Option()] = None,
+) -> None:
+    """Estimates poses for the targets and scores them; resumes an interrupted run."""
+    from posegrasp.data.bop import Dataset
+    from posegrasp.estimators import create_estimator
+    from posegrasp.pipeline import CONDITIONS, evaluate_targets, load_rows, summarize_rows
+
+    if condition not in CONDITIONS:
+        raise typer.BadParameter(f"condition must be one of {sorted(CONDITIONS)}")
+    settings = get_settings()
+    base = data_dir or settings.data_dir
+    ds = Dataset(base / settings.dataset)
+    dev, all_targets = _dev_split(ds.targets())
+    targets = dev if subset == "dev" else all_targets
+    name = subset
+    if shard is not None:
+        i, n = (int(v) for v in shard.split("/"))
+        images = sorted({(t.scene_id, t.im_id) for t in targets})[i::n]
+        keep = set(images)
+        targets = [t for t in targets if (t.scene_id, t.im_id) in keep]
+        name = f"{subset}-shard-{i}-of-{n}"
+    if limit is not None:
+        targets = targets[:limit]
+    method = f"{estimator}-{selection}" + (f"-r{restarts}" if estimator == "fpfh" else "")
+    out = (results_dir or settings.results_dir) / method / condition / f"{name}.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    rows = load_rows(out)
+    done = {(r["scene_id"], r["im_id"], r["obj_id"]) for r in rows}
+    todo = [t for t in targets if (t.scene_id, t.im_id, t.obj_id) not in done]
+    typer.echo(f"{estimator}/{condition}: {len(targets)} targets, {len(todo)} to go -> {out}")
+    with out.open("a", encoding="utf-8") as f:
+        kwargs = {"restarts": restarts} if estimator == "fpfh" else {}
+        rows_iter = evaluate_targets(
+            ds,
+            todo,
+            estimator=create_estimator(estimator, **kwargs),
+            condition=condition,
+            detections_dir=base / "detections",
+            selection=selection,
+        )
+        for row in rows_iter:
+            f.write(json.dumps(row) + "\n")
+            f.flush()
+            rows.append(row)
+    typer.echo(json.dumps(summarize_rows(rows), indent=2))
+
+
 if __name__ == "__main__":
     app()
