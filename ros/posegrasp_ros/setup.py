@@ -19,7 +19,7 @@ setup(
     maintainer_email="gbrohiith@gmail.com",
     description="ROS 2 nodes of posegrasp: scene player, pose estimation, grasps, MoveIt 2 pick",
     license="MIT",
-    tests_require=["pytest"],
+    extras_require={"test": ["pytest"]},
     entry_points={
         "console_scripts": [
             f"bop_player = {PACKAGE}.bop_player:main",
