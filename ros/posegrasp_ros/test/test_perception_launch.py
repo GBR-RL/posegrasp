@@ -72,7 +72,7 @@ class TestPerception(unittest.TestCase):
         self.node.create_subscription(
             PoseArray, "grasps", lambda m: received["grasps"].append(m), 10
         )
-        self.wait_for(received, timeout=900.0)
+        self.wait_for(received, timeout=600.0)
 
         poses = [m for m in received["poses"] if m.detections]
         self.assertTrue(poses, "no pose estimate published")

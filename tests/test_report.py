@@ -69,6 +69,18 @@ def results(tmp_path: Path) -> Path:
         [_grasp_row(1, 1, True, 1.0), _grasp_row(1, 5, False, 30.0), _grasp_row(2, 1, True, 2.0)],
     )
     _write(root / "oracle" / "all.grasp.jsonl", [_grasp_row(1, 1, True, 0.0)])
+    _write(
+        gt / "all-shard-0-of-2.grasp-nominal.jsonl",
+        [_grasp_row(1, 1, False, 1.0), _grasp_row(1, 5, False, 30.0), _grasp_row(2, 1, True, 2.0)],
+    )
+    sim = [
+        {**_grasp_row(1, 1, True, 1.0), "physics_success": True, "physics_reason": "ok"},
+        {**_grasp_row(1, 5, False, 30.0), "physics_success": True, "physics_reason": "ok"},
+        {**_grasp_row(2, 1, True, 2.0), "physics_success": False, "physics_reason": "dropped"},
+        {**_grasp_row(3, 1, True, 2.0), "physics_success": False,
+         "physics_reason": "unstable_scene"},
+    ]  # fmt: skip
+    _write(gt / "all-shard-0-of-2.sim.jsonl", sim)
     _write(tmp_path / "latency" / "ppf-score" / "gt" / "dev.jsonl", [_pose_row(9, 1, True, 1.0)])
     return root
 
@@ -86,6 +98,19 @@ def test_report_merges_shards_and_summarises(results: Path) -> None:
     assert data["grasp_success_by_mssd"]["0.2-0.5"]["n"] == 1
     assert data["latency"]["ppf-score"]["p50"] == pytest.approx(0.5)
     assert "fpfh-verify-r5/gt" not in data["poses"]  # no runs: left out
+    assert data["grasps_nominal"]["ppf-score/gt"]["success_rate"] == pytest.approx(1 / 3)
+    physics = data["physics"]["ppf-score/gt"]
+    assert physics["trials"] == 3  # the unstable scene is left out
+    assert physics["unstable_scenes"] == 1
+    assert physics["physics_success_rate"] == pytest.approx(2 / 3)
+    assert physics["geometric_success_rate"] == pytest.approx(2 / 3)
+    assert physics["agreement"] == pytest.approx(1 / 3)
+    assert physics["confusion"] == {
+        "both": 1,
+        "geometric_only": 1,
+        "physics_only": 1,
+        "neither": 0,
+    }
 
 
 def test_report_files(results: Path, tmp_path: Path) -> None:
@@ -96,6 +121,8 @@ def test_report_files(results: Path, tmp_path: Path) -> None:
     md = (out / "results.md").read_text(encoding="utf-8")
     assert "| PPF + ICP | GT masks | **0.667** |" in md
     assert "Oracle (true pose)" in md
+    assert "## Physics check (MuJoCo)" in md
+    assert "| PPF + ICP | GT masks | 0.667 | **66.7 %** | 33.3 % |" in md
     csv = (out / "bop" / "ppf-score-gt_lmo-test.csv").read_text(encoding="utf-8").splitlines()
     assert len(csv) == 4  # header + 3 poses
     assert json.loads((out / "summary.json").read_text(encoding="utf-8"))["subset"] == "all"

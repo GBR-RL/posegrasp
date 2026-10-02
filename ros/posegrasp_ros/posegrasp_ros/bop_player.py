@@ -31,6 +31,7 @@ from vision_msgs.msg import (
 
 from posegrasp.data import detections as det
 from posegrasp.data.bop import Dataset, Frame, Target
+from posegrasp.geometry import load_vertices
 from posegrasp.pipeline import CONDITIONS
 from posegrasp.scene import base_in_camera
 from posegrasp_ros.conversions import (
@@ -160,7 +161,13 @@ class BopPlayer(Node):
 
     def send_base(self, header: Header, depth: np.ndarray, frame: Frame) -> None:
         centre = np.mean([g.pose.t for g in frame.gt], axis=0)
-        base = base_in_camera(depth, frame.camera.K, centre=centre, reach=self.reach_mm)
+        models = self.dataset.models()
+        vertices = [
+            load_vertices(models[g.obj_id].eval_mesh) @ g.pose.R.T + g.pose.t for g in frame.gt
+        ]
+        base = base_in_camera(
+            depth, frame.camera.K, centre=centre, reach=self.reach_mm, objects=vertices
+        )
         tf = TransformStamped()
         tf.header.stamp = header.stamp
         tf.header.frame_id = self.base_frame

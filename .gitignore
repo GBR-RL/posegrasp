@@ -11,6 +11,7 @@ data/raw/
 data/lmo/
 data/detections/
 data/grasps/
+data/sim/
 results/
 
 # ROS 2 build trees

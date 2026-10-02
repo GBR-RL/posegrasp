@@ -1,7 +1,8 @@
 name: Benchmark
 
 # The full benchmark on free GitHub-hosted runners: both pose methods under the three detection
-# inputs, each split into image shards, then the grasp experiment on every pose, the oracle
+# inputs, each split into image shards, then the grasp experiment on every pose (robust ranking
+# and the nominal ablation), the physics check of the planned grasps in MuJoCo, the oracle
 # (grasps planned from the true pose), a latency run of both methods on one machine, and the
 # merged report. Settings are frozen in docs/EVAL_PROTOCOL.md.
 
@@ -21,17 +22,25 @@ env:
 
 jobs:
   prepare:
-    name: Data and grasps
+    name: Data, grasps and simulation assets
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
+        with:
+          extras: sim
       - name: Grasps per object (cached by the grasp code)
         uses: actions/cache@v5
         with:
           path: data/grasps
           key: grasps-${{ hashFiles('src/posegrasp/grasp.py', 'src/posegrasp/picking.py', 'src/posegrasp/geometry.py') }}
       - run: posegrasp grasps
+      - name: Hand model and convex decompositions (cached by the simulation code)
+        uses: actions/cache@v5
+        with:
+          path: data/sim
+          key: sim-${{ hashFiles('src/posegrasp/sim.py') }}
+      - run: posegrasp sim-assets
 
   shard:
     name: ${{ matrix.method }} / ${{ matrix.condition }} / shard ${{ matrix.shard }}
@@ -57,18 +66,29 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
+        with:
+          extras: sim
       - uses: actions/cache/restore@v5
         with:
           path: data/grasps
           key: grasps-${{ hashFiles('src/posegrasp/grasp.py', 'src/posegrasp/picking.py', 'src/posegrasp/geometry.py') }}
+      - uses: actions/cache/restore@v5
+        with:
+          path: data/sim
+          key: sim-${{ hashFiles('src/posegrasp/sim.py') }}
       - name: Pose estimation
         if: matrix.method != 'oracle'
         run: >-
           posegrasp eval ${{ matrix.args }} --condition ${{ matrix.condition }}
           --subset $SUBSET --shard ${{ matrix.shard }}/$SHARDS
       - name: Grasp experiment
+        run: |
+          args="--method ${{ matrix.method }} --condition ${{ matrix.condition }} --subset $SUBSET --shard ${{ matrix.shard }}/$SHARDS"
+          posegrasp pick $args --ranking robust
+          posegrasp pick $args --ranking nominal
+      - name: Physics check
         run: >-
-          posegrasp pick --method ${{ matrix.method }} --condition ${{ matrix.condition }}
+          posegrasp simulate --method ${{ matrix.method }} --condition ${{ matrix.condition }}
           --subset $SUBSET --shard ${{ matrix.shard }}/$SHARDS
       - uses: actions/upload-artifact@v5
         with:

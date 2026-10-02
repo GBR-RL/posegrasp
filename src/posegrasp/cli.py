@@ -203,6 +203,102 @@ def pick(
     typer.echo(json.dumps(summarize_grasps(done_rows), indent=2))
 
 
+@app.command("sim-assets")
+def sim_assets(data_dir: DataDirOpt = None) -> None:
+    """Fetches the MuJoCo Franka Hand and decomposes every object into convex parts (cached)."""
+    from posegrasp.data.bop import Dataset
+    from posegrasp.sim import convex_parts, fetch_hand
+
+    settings = get_settings()
+    base = data_dir or settings.data_dir
+    typer.echo(str(fetch_hand(base / "sim")))
+    for obj_id, model in sorted(Dataset(base / settings.dataset).models().items()):
+        parts = convex_parts(model.mesh_path, base / "sim")
+        typer.echo(f"object {obj_id}: {len(parts)} convex parts")
+
+
+@app.command("simulate")
+def simulate(
+    method: Annotated[str, typer.Option(help="Results folder of a pose method, or 'oracle'")] = (
+        "ppf-score"
+    ),
+    condition: Annotated[str, typer.Option(help="gt | gdrnpp | cnos")] = "gt",
+    subset: Annotated[str, typer.Option(help="dev | all")] = "dev",
+    shard: Annotated[str | None, typer.Option(help="INDEX/COUNT of the targeted images")] = None,
+    every: Annotated[int, typer.Option(help="Only every N-th targeted image")] = 1,
+    data_dir: DataDirOpt = None,
+    results_dir: Annotated[Path | None, typer.Option()] = None,
+) -> None:
+    """Executes the planned grasps (robust ranking) in MuJoCo; resumable."""
+    from posegrasp.data.bop import Dataset
+    from posegrasp.pipeline import load_rows
+    from posegrasp.report import summarize_physics
+    from posegrasp.sim import simulate_grasps
+
+    settings = get_settings()
+    base = data_dir or settings.data_dir
+    root = results_dir or settings.results_dir
+    ds = Dataset(base / settings.dataset)
+    _, name = _select(ds.targets(), subset, shard)
+    folder = root / "oracle" if method == "oracle" else root / method / condition
+    rows = load_rows(folder / f"{name}.grasp.jsonl")
+    if not rows:
+        raise typer.BadParameter(f"no grasp results in {folder}/{name}.grasp.jsonl")
+    images = sorted({(r["scene_id"], r["im_id"]) for r in rows})[:: max(1, every)]
+    keep = set(images)
+    rows = [r for r in rows if (r["scene_id"], r["im_id"]) in keep]
+    out = folder / f"{name}.sim.jsonl"
+    done_rows = load_rows(out)
+    done = {(r["scene_id"], r["im_id"], r["obj_id"]) for r in done_rows}
+    todo = [r for r in rows if (r["scene_id"], r["im_id"], r["obj_id"]) not in done]
+    typer.echo(f"simulate {method}/{condition}: {len(rows)} grasps, {len(todo)} to go -> {out}")
+    with out.open("a", encoding="utf-8") as f:
+        for row in simulate_grasps(ds, todo, cache=base / "sim"):
+            f.write(json.dumps(row) + "\n")
+            f.flush()
+            done_rows.append(row)
+    typer.echo(json.dumps(summarize_physics(done_rows), indent=2))
+
+
+@app.command("render-pick")
+def render_pick(
+    scene_id: Annotated[int, typer.Option()] = 2,
+    im_id: Annotated[int, typer.Option()] = 3,
+    obj_id: Annotated[int, typer.Option()] = 8,
+    grasps_file: Annotated[
+        Path, typer.Option(help="Grasp rows of `posegrasp pick` holding this target")
+    ] = Path("results/oracle/all.grasp.jsonl"),
+    out: Annotated[Path, typer.Option()] = Path("docs/media/pick.gif"),
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Renders one simulated pick, seen from the LM-O camera, as an animated GIF."""
+    import imageio.v3 as iio
+    import mujoco
+    import numpy as np
+
+    from posegrasp.data.bop import Dataset
+    from posegrasp.pipeline import load_rows
+    from posegrasp.sim import SceneSetup, fetch_hand
+
+    settings = get_settings()
+    base = data_dir or settings.data_dir
+    ds = Dataset(base / settings.dataset)
+    row = next(
+        r
+        for r in load_rows(grasps_file)
+        if (r["scene_id"], r["im_id"], r["obj_id"]) == (scene_id, im_id, obj_id)
+    )
+    if row.get("grasp") is None:
+        raise typer.BadParameter("no planned grasp for this target")
+    setup = SceneSetup.of(ds, ds.frame(scene_id, im_id), base / "sim")
+    trial = setup.trial(obj_id, np.asarray(row["grasp"]), fetch_hand(base / "sim"))
+    renderer = mujoco.Renderer(trial.model, 360, 480)
+    result = trial.run(render=renderer)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    iio.imwrite(out, np.stack(result.frames), duration=80, loop=0)
+    typer.echo(f"{out}: {len(result.frames)} frames, {result.reason}, rise {result.rise:.3f} m")
+
+
 @app.command("report")
 def report(
     results_dir: Annotated[Path | None, typer.Option()] = None,
