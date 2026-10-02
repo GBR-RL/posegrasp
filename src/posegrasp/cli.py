@@ -74,6 +74,19 @@ def _dev_split(targets: list, every: int = 10) -> tuple[list, list]:  # type: ig
     return [t for t in targets if (t.scene_id, t.im_id) in dev], targets
 
 
+def _select(targets: list, subset: str, shard: str | None) -> tuple[list, str]:  # type: ignore[type-arg]
+    """Targets of the subset (dev | all), optionally one shard of its images, and a run name."""
+    if subset not in {"dev", "all"}:
+        raise typer.BadParameter("subset must be dev or all")
+    dev, all_targets = _dev_split(targets)
+    chosen = dev if subset == "dev" else all_targets
+    if shard is None:
+        return chosen, subset
+    i, n = (int(v) for v in shard.split("/"))
+    keep = set(sorted({(t.scene_id, t.im_id) for t in chosen})[i::n])
+    return [t for t in chosen if (t.scene_id, t.im_id) in keep], f"{subset}-shard-{i}-of-{n}"
+
+
 @app.command("eval")
 def evaluate(
     estimator: Annotated[str, typer.Option(help="fpfh | ppf")] = "fpfh",
@@ -96,15 +109,7 @@ def evaluate(
     settings = get_settings()
     base = data_dir or settings.data_dir
     ds = Dataset(base / settings.dataset)
-    dev, all_targets = _dev_split(ds.targets())
-    targets = dev if subset == "dev" else all_targets
-    name = subset
-    if shard is not None:
-        i, n = (int(v) for v in shard.split("/"))
-        images = sorted({(t.scene_id, t.im_id) for t in targets})[i::n]
-        keep = set(images)
-        targets = [t for t in targets if (t.scene_id, t.im_id) in keep]
-        name = f"{subset}-shard-{i}-of-{n}"
+    targets, name = _select(ds.targets(), subset, shard)
     if limit is not None:
         targets = targets[:limit]
     method = f"{estimator}-{selection}" + (f"-r{restarts}" if estimator == "fpfh" else "")
@@ -129,6 +134,66 @@ def evaluate(
             f.flush()
             rows.append(row)
     typer.echo(json.dumps(summarize_rows(rows), indent=2))
+
+
+@app.command("grasps")
+def grasps(data_dir: DataDirOpt = None) -> None:
+    """Synthesises antipodal grasps for every object model once (cached in DATA_DIR/grasps)."""
+    from posegrasp.data.bop import Dataset
+    from posegrasp.picking import grasp_sets
+
+    settings = get_settings()
+    base = data_dir or settings.data_dir
+    sets = grasp_sets(Dataset(base / settings.dataset).models(), base / "grasps", log=True)
+    typer.echo(json.dumps({obj_id: len(s) for obj_id, s in sets.items()}))
+
+
+@app.command("pick")
+def pick(
+    method: Annotated[
+        str, typer.Option(help="Results folder of a pose method, or 'oracle' (the true pose)")
+    ] = "ppf-verify",
+    condition: Annotated[str, typer.Option(help="gt | gdrnpp | cnos")] = "gt",
+    subset: Annotated[str, typer.Option(help="dev | all")] = "dev",
+    shard: Annotated[str | None, typer.Option(help="INDEX/COUNT of the targeted images")] = None,
+    data_dir: DataDirOpt = None,
+    results_dir: Annotated[Path | None, typer.Option()] = None,
+) -> None:
+    """Plans a grasp from each pose estimate and judges it on the true pose; resumable."""
+    from posegrasp.data.bop import Dataset
+    from posegrasp.picking import evaluate_grasps, grasp_sets, summarize_grasps
+    from posegrasp.pipeline import load_rows
+
+    settings = get_settings()
+    base = data_dir or settings.data_dir
+    root = results_dir or settings.results_dir
+    ds = Dataset(base / settings.dataset)
+    targets, name = _select(ds.targets(), subset, shard)
+    oracle = method == "oracle"
+    if oracle:
+        rows = [
+            {"scene_id": t.scene_id, "im_id": t.im_id, "obj_id": t.obj_id}
+            for t in targets
+            for _ in range(t.inst_count)
+        ]
+        out = root / "oracle" / f"{name}.grasp.jsonl"
+    else:
+        rows = load_rows(root / method / condition / f"{name}.jsonl")
+        if not rows:
+            raise typer.BadParameter(f"no pose results in {root / method / condition}/{name}.jsonl")
+        out = root / method / condition / f"{name}.grasp.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    done_rows = load_rows(out)
+    done = {(r["scene_id"], r["im_id"], r["obj_id"]) for r in done_rows}
+    todo = [r for r in rows if (r["scene_id"], r["im_id"], r["obj_id"]) not in done]
+    typer.echo(f"pick {method}/{condition}: {len(rows)} poses, {len(todo)} to go -> {out}")
+    sets = grasp_sets(ds.models(), base / "grasps", log=True)
+    with out.open("a", encoding="utf-8") as f:
+        for row in evaluate_grasps(ds, todo, grasps=sets, oracle=oracle):
+            f.write(json.dumps(row) + "\n")
+            f.flush()
+            done_rows.append(row)
+    typer.echo(json.dumps(summarize_grasps(done_rows), indent=2))
 
 
 if __name__ == "__main__":
