@@ -194,15 +194,17 @@ class GraspSet:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        arrays = {"poses": self.poses, "widths": self.widths, "quality": self.quality}
-        if self.robustness is not None:
-            arrays["robustness"] = self.robustness
-        np.savez_compressed(path, **arrays)
+        robustness = np.full(len(self), np.nan) if self.robustness is None else self.robustness
+        np.savez_compressed(
+            path, poses=self.poses, widths=self.widths, quality=self.quality, robustness=robustness
+        )
 
     @staticmethod
     def load(path: Path) -> GraspSet:
         with np.load(path) as data:
             robustness = data["robustness"] if "robustness" in data.files else None
+            if robustness is not None and np.isnan(robustness).all():
+                robustness = None
             return GraspSet(data["poses"], data["widths"], data["quality"], robustness)
 
 

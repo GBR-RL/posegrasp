@@ -26,6 +26,8 @@ from posegrasp.data.bop import Dataset, Frame
 from posegrasp.geometry import FloatArray, load_vertices
 from posegrasp.scene import base_in_camera
 
+# The benchmark workflow caches the hand and the decompositions under a key naming this commit and
+# the CoACD settings of convex_parts: change the key with them.
 MENAGERIE_COMMIT = "71f066ad0be9cd271f7ed58c030243ef157af9f4"
 MENAGERIE = "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie"
 HAND_FILES = (
@@ -297,13 +299,27 @@ class PickTrial:
                 touched |= bodies & self.fingers
         return touched == self.fingers
 
-    def run(self, *, render: Any = None) -> TrialResult:
-        """render: an optional mujoco.Renderer; frames are recorded from the camera "view"."""
+    def tracking_camera(self, distance: float = 0.7) -> Any:
+        """A free camera on the target, looking from the scene camera's direction."""
+        self.mujoco.mj_forward(self.model, self.data)
+        target = self.data.xpos[self.target]
+        forward = target - self.data.cam_xpos[self.model.camera("view").id]
+        forward /= np.linalg.norm(forward)
+        camera = self.mujoco.MjvCamera()
+        camera.lookat[:] = target
+        camera.distance = distance
+        camera.azimuth = math.degrees(math.atan2(forward[1], forward[0]))
+        camera.elevation = math.degrees(math.asin(forward[2]))
+        return camera
+
+    def run(self, *, render: Any = None, camera: Any = "view") -> TrialResult:
+        """render: an optional mujoco.Renderer recording frames from `camera` (a camera name or
+        a mujoco.MjvCamera)."""
         frames: list[NDArray[np.uint8]] = []
 
         def record() -> None:
             if render is not None:
-                render.update_scene(self.data, camera="view")
+                render.update_scene(self.data, camera=camera)
                 frames.append(render.render().copy())
 
         self.data.ctrl[self.actuator] = 255  # open

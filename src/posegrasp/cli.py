@@ -292,11 +292,33 @@ def render_pick(
         raise typer.BadParameter("no planned grasp for this target")
     setup = SceneSetup.of(ds, ds.frame(scene_id, im_id), base / "sim")
     trial = setup.trial(obj_id, np.asarray(row["grasp"]), fetch_hand(base / "sim"))
-    renderer = mujoco.Renderer(trial.model, 360, 480)
-    result = trial.run(render=renderer)
+    renderer = mujoco.Renderer(trial.model, 300, 400)
+    result = trial.run(render=renderer, camera=trial.tracking_camera())
     out.parent.mkdir(parents=True, exist_ok=True)
     iio.imwrite(out, np.stack(result.frames), duration=80, loop=0)
     typer.echo(f"{out}: {len(result.frames)} frames, {result.reason}, rise {result.rise:.3f} m")
+
+
+@app.command("gallery")
+def gallery(
+    results_dir: Annotated[Path | None, typer.Option()] = None,
+    subset: Annotated[str, typer.Option(help="dev | all")] = "all",
+    out: Annotated[Path, typer.Option()] = Path("docs/media/failures.png"),
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Renders typical failures, picked from the results, as one annotated image."""
+    from posegrasp.data.bop import Dataset
+    from posegrasp.gallery import caption, pick_cases, render_gallery
+
+    settings = get_settings()
+    ds = Dataset((data_dir or settings.data_dir) / settings.dataset)
+    cases = pick_cases(results_dir or settings.results_dir, ds, subset)
+    if not cases:
+        raise typer.BadParameter("no failure cases found in the results")
+    render_gallery(ds, cases, out)
+    for case in cases:
+        typer.echo(" | ".join(caption(case)))
+    typer.echo(str(out))
 
 
 @app.command("report")

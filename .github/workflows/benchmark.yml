@@ -39,7 +39,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: data/sim
-          key: sim-${{ hashFiles('src/posegrasp/sim.py') }}
+          key: sim-assets-v1-menagerie-71f066a-coacd-0.08-12  # change with the decomposition settings
       - run: posegrasp sim-assets
 
   shard:
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/cache/restore@v5
         with:
           path: data/sim
-          key: sim-${{ hashFiles('src/posegrasp/sim.py') }}
+          key: sim-assets-v1-menagerie-71f066a-coacd-0.08-12  # change with the decomposition settings
       - name: Pose estimation
         if: matrix.method != 'oracle'
         run: >-

@@ -50,7 +50,7 @@ VISIBILITY_BINS = (0.3, 0.5, 0.7, 0.9)
 DASH = chr(0x2013)  # en dash: an empty table cell
 
 
-def _merged(folder: Path, subset: str, suffix: str) -> Rows:
+def merged_rows(folder: Path, subset: str, suffix: str) -> Rows:
     """Rows of `<subset>.<suffix>` or of all its shards, without duplicates."""
     pattern = re.compile(rf"^{re.escape(subset)}(-shard-\d+-of-\d+)?\.{re.escape(suffix)}$")
     rows: dict[tuple[int, int, int], dict[str, Any]] = {}
@@ -142,7 +142,7 @@ def build(results: Path, *, subset: str = "all", latency: Path | None = None) ->
     for method in METHODS:
         for condition in CONDITIONS:
             folder = results / method / condition
-            rows = _merged(folder, subset, "jsonl")
+            rows = merged_rows(folder, subset, "jsonl")
             if not rows:
                 continue
             key = f"{method}/{condition}"
@@ -162,23 +162,23 @@ def build(results: Path, *, subset: str = "all", latency: Path | None = None) ->
                 "by_visibility": by_visibility,
             }
             bop_files[f"{method}-{condition}_lmo-test.csv"] = to_bop_csv(rows)
-            grasp_rows = _merged(folder, subset, "grasp.jsonl")
+            grasp_rows = merged_rows(folder, subset, "grasp.jsonl")
             if grasp_rows:
                 grasps[key] = summarize_grasps(grasp_rows)
                 pooled_grasp_rows += grasp_rows
-            nominal_rows = _merged(folder, subset, "grasp-nominal.jsonl")
+            nominal_rows = merged_rows(folder, subset, "grasp-nominal.jsonl")
             if nominal_rows:
                 nominal[key] = summarize_grasps(nominal_rows)
                 pooled_nominal_rows += nominal_rows
-            sim_rows = _merged(folder, subset, "sim.jsonl")
+            sim_rows = merged_rows(folder, subset, "sim.jsonl")
             if sim_rows:
                 physics[key] = summarize_physics(sim_rows)
     oracle = results / "oracle"
     for suffix, table in (("grasp.jsonl", grasps), ("grasp-nominal.jsonl", nominal)):
-        oracle_rows = _merged(oracle, subset, suffix)
+        oracle_rows = merged_rows(oracle, subset, suffix)
         if oracle_rows:
             table["oracle"] = summarize_grasps(oracle_rows)
-    oracle_sim = _merged(oracle, subset, "sim.jsonl")
+    oracle_sim = merged_rows(oracle, subset, "sim.jsonl")
     if oracle_sim:
         physics["oracle"] = summarize_physics(oracle_sim)
     timing = {}
