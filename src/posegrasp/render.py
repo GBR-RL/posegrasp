@@ -32,10 +32,20 @@ def raycasting_scene(mesh_path: Path) -> Any:
     return scene
 
 
-def render_depth(mesh_path: Path, pose: Pose, K: FloatArray, roi: Roi) -> FloatArray:
-    """Depth (mm) of the posed mesh over the pixel window `roi`; 0 where no surface is hit."""
+def cast_rays(mesh_path: Path, rays: FloatArray) -> tuple[FloatArray, FloatArray]:
+    """Rays (N, 6: origin, direction) against the mesh: distance to the first hit in units of the
+    direction's length (inf: no hit), and the normal of the triangle hit."""
     import open3d as o3d
 
+    tensor = o3d.core.Tensor(np.ascontiguousarray(rays, dtype=np.float32))  # type: ignore[call-overload]
+    hits = raycasting_scene(mesh_path).cast_rays(tensor)
+    t_hit: FloatArray = hits["t_hit"].numpy().astype(np.float64)
+    normals: FloatArray = hits["primitive_normals"].numpy().astype(np.float64)
+    return t_hit, normals
+
+
+def render_depth(mesh_path: Path, pose: Pose, K: FloatArray, roi: Roi) -> FloatArray:
+    """Depth (mm) of the posed mesh over the pixel window `roi`; 0 where no surface is hit."""
     x0, y0, x1, y1 = roi
     if x1 <= x0 or y1 <= y0:
         return np.zeros((max(0, y1 - y0), max(0, x1 - x0)))
@@ -46,9 +56,8 @@ def render_depth(mesh_path: Path, pose: Pose, K: FloatArray, roi: Roi) -> FloatA
     # Cast in the model frame: origin = camera centre, directions rotated by R^T.
     origin = -pose.R.T @ pose.t
     dirs = rays_cam.reshape(-1, 3) @ pose.R  # (R^T d)^T = d^T R
-    rays = np.hstack([np.broadcast_to(origin, dirs.shape), dirs]).astype(np.float32)
-    hits = raycasting_scene(mesh_path).cast_rays(o3d.core.Tensor(rays))  # type: ignore[call-overload]
-    t_hit = hits["t_hit"].numpy().reshape(u.shape).astype(np.float64)
+    t_hit = cast_rays(mesh_path, np.hstack([np.broadcast_to(origin, dirs.shape), dirs]))[0]
+    t_hit = t_hit.reshape(u.shape)
     # The ray's z-component is 1, so the hit distance along it is the depth.
     depth: FloatArray = np.where(np.isfinite(t_hit) & (t_hit > 0), t_hit, 0.0)
     return depth
