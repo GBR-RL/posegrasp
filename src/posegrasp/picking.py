@@ -26,23 +26,23 @@ SCENE_STRIDE = 2  # every 2nd pixel in each direction: about 5 mm apart on the o
 ERROR_BINS = (0.05, 0.1, 0.2, 0.5)  # MSSD as a fraction of the diameter
 
 
+def grasp_set(model: ObjectModel, cache_dir: Path, *, log: bool = False) -> GraspSet:
+    """Antipodal grasps of one object, synthesised once and cached as .npz."""
+    path = cache_dir / f"obj_{model.obj_id:06d}.npz"
+    if not path.exists():
+        start = time.perf_counter()
+        surface = load_model(model.mesh_path, model.diameter).points
+        synthesize(model.mesh_path, surface=surface).save(path)
+        if log:
+            seconds = time.perf_counter() - start
+            print(f"grasps for object {model.obj_id}: {seconds:.0f} s", flush=True)
+    return GraspSet.load(path)
+
+
 def grasp_sets(
     models: dict[int, ObjectModel], cache_dir: Path, *, log: bool = False
 ) -> dict[int, GraspSet]:
-    """Antipodal grasps per object, synthesised once and cached as .npz."""
-    sets = {}
-    for obj_id, model in sorted(models.items()):
-        path = cache_dir / f"obj_{obj_id:06d}.npz"
-        if not path.exists():
-            start = time.perf_counter()
-            surface = load_model(model.mesh_path, model.diameter).points
-            synthesize(model.mesh_path, surface=surface).save(path)
-            if log:
-                print(
-                    f"grasps for object {obj_id}: {time.perf_counter() - start:.0f} s", flush=True
-                )
-        sets[obj_id] = GraspSet.load(path)
-    return sets
+    return {i: grasp_set(m, cache_dir, log=log) for i, m in sorted(models.items())}
 
 
 def scene_points(depth: FloatArray, K: FloatArray) -> tuple[FloatArray, NDArray[np.bool_]]:

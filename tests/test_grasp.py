@@ -145,6 +145,8 @@ def test_planner_finds_a_camera_facing_grasp_that_works(
     )
     assert plan.grasp is not None
     assert plan.feasible <= plan.candidates <= len(grasps)
+    assert np.allclose(plan.ranked[0], plan.grasp)
+    assert 1 <= len(plan.ranked) == len(plan.widths) <= 10
     approach = plan.grasp[:3, 2]
     ray = plan.grasp[:3, 3] / np.linalg.norm(plan.grasp[:3, 3])
     assert approach @ ray >= np.cos(np.radians(60)) - 1e-9

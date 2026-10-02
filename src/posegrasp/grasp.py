@@ -91,30 +91,62 @@ class Outcome:
     width: float = math.nan  # opening after closing, mm
 
 
-def close_on(grasp: FloatArray, mesh_path: Path, gripper: Gripper) -> Outcome:
-    """Closes the fingers of the grasp (grasp -> model frame) on the mesh, by ray casting from the
-    pad grid of each open finger along the closing axis."""
-    R, t = grasp[:3, :3], grasp[:3, 3]
+def close_on_many(grasps: FloatArray, mesh_path: Path, gripper: Gripper) -> list[Outcome]:
+    """Closes the fingers of each grasp (K, 4, 4; grasp -> model frame) on the mesh, by ray
+    casting from the pad grid of each open finger along the closing axis. The first hit per
+    finger is its contact."""
     grid = gripper.pad_grid()
+    n = len(grid)
     half = gripper.max_width / 2
-    rays = []
-    for side in (-1.0, 1.0):  # finger at -y closes along +y, and the other way round
-        local = np.column_stack([grid[:, 0], np.full(len(grid), side * half), grid[:, 1]])
-        direction = R @ np.array([0.0, -side, 0.0])
-        rays.append(np.hstack([local @ R.T + t, np.broadcast_to(direction, local.shape)]))
-    t_hit, hit_normals = cast_rays(mesh_path, np.vstack(rays))
-    distance = t_hit.reshape(2, -1)
-    normals = hit_normals.reshape(2, -1, 3)
-    first = distance.argmin(axis=1)
-    d = distance[[0, 1], first]
-    if not np.isfinite(d).all() or d.sum() >= gripper.max_width:
-        return Outcome(False, "no_contact")
-    y = R[:, 1]
-    n_low, n_high = normals[0, first[0]], normals[1, first[1]]
+    # finger at -y closes along +y, the one at +y along -y
+    local = np.vstack(
+        [np.column_stack([grid[:, 0], np.full(n, s * half), grid[:, 1]]) for s in (-1.0, 1.0)]
+    )
+    directions = np.vstack([np.tile([0.0, -s, 0.0], (n, 1)) for s in (-1.0, 1.0)])
+    R, t = grasps[:, :3, :3], grasps[:, :3, 3]
+    origins = np.einsum("kij,nj->kni", R, local) + t[:, None, :]
+    dirs = np.einsum("kij,nj->kni", R, directions)
+    t_hit, hit_normals = cast_rays(mesh_path, np.concatenate([origins, dirs], -1).reshape(-1, 6))
+    distance = t_hit.reshape(len(grasps), 2, n)
+    normals = hit_normals.reshape(len(grasps), 2, n, 3)
+    first = distance.argmin(axis=2)
+    d = np.take_along_axis(distance, first[..., None], axis=2)[..., 0]
+    contact_normals = np.take_along_axis(normals, first[..., None, None], axis=2)[:, :, 0]
+    y = R[:, :, 1]
     # outward normals must face their finger: -y at the -y finger, +y at the other
-    if min(float(-n_low @ y), float(n_high @ y)) < gripper.cone_cos:
-        return Outcome(False, "slip", gripper.max_width - float(d.sum()))
-    return Outcome(True, "ok", gripper.max_width - float(d.sum()))
+    cos_low = -np.einsum("ki,ki->k", contact_normals[:, 0], y)
+    cos_high = np.einsum("ki,ki->k", contact_normals[:, 1], y)
+    outcomes = []
+    for k in range(len(grasps)):
+        width = gripper.max_width - float(d[k].sum())
+        if not np.isfinite(d[k]).all() or width <= 0:
+            outcomes.append(Outcome(False, "no_contact"))
+        elif min(cos_low[k], cos_high[k]) < gripper.cone_cos:
+            outcomes.append(Outcome(False, "slip", width))
+        else:
+            outcomes.append(Outcome(True, "ok", width))
+    return outcomes
+
+
+def close_on(grasp: FloatArray, mesh_path: Path, gripper: Gripper) -> Outcome:
+    return close_on_many(grasp[None], mesh_path, gripper)[0]
+
+
+def collides_many(
+    grasps: FloatArray, points: FloatArray, gripper: Gripper, *, tolerance: int = 0
+) -> BoolArray:
+    """For each grasp (K, 4, 4), whether more than `tolerance` points (in the grasps' parent
+    frame) lie inside the open gripper."""
+    if len(points) == 0:
+        return np.zeros(len(grasps), dtype=bool)
+    centres, halves = gripper.boxes()
+    R, t = grasps[:, :3, :3], grasps[:, :3, 3]
+    local = (points[None] - t[:, None, :]) @ R  # (K, N, 3) in each grasp frame
+    inside = np.zeros(local.shape[:2], dtype=bool)
+    for centre, half in zip(centres, halves, strict=True):
+        inside |= (np.abs(local - centre) < half).all(axis=-1)
+    out: BoolArray = inside.sum(axis=1) > tolerance
+    return out
 
 
 def collides(
@@ -122,11 +154,7 @@ def collides(
 ) -> bool:
     """Whether more than `tolerance` points (in the grasp's parent frame) lie inside the open
     gripper."""
-    if len(points) == 0:
-        return False
-    centres, halves = gripper.boxes()
-    inside = (box_distance(to_frame(points, grasp), centres, halves) < 0).any(axis=1)
-    return int(inside.sum()) > tolerance
+    return bool(collides_many(grasp[None], points, gripper, tolerance=tolerance)[0])
 
 
 def judge(
@@ -159,18 +187,64 @@ class GraspSet:
     poses: FloatArray  # (M, 4, 4) grasp -> model frame
     widths: FloatArray  # (M,) object width between the contacts
     quality: FloatArray  # (M,) friction margin: 1 at the cone axis, 0 at its border
+    robustness: FloatArray | None = None  # (M,) success rate under small pose errors
 
     def __len__(self) -> int:
         return len(self.poses)
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(path, poses=self.poses, widths=self.widths, quality=self.quality)
+        arrays = {"poses": self.poses, "widths": self.widths, "quality": self.quality}
+        if self.robustness is not None:
+            arrays["robustness"] = self.robustness
+        np.savez_compressed(path, **arrays)
 
     @staticmethod
     def load(path: Path) -> GraspSet:
         with np.load(path) as data:
-            return GraspSet(data["poses"], data["widths"], data["quality"])
+            robustness = data["robustness"] if "robustness" in data.files else None
+            return GraspSet(data["poses"], data["widths"], data["quality"], robustness)
+
+
+def perturbations(
+    n: int, *, translation: float = 3.0, rotation_deg: float = 3.0, seed: int = 0
+) -> FloatArray:
+    """n small rigid motions (4x4): Gaussian translation (mm) and rotation (degrees) per axis."""
+    from scipy.spatial.transform import Rotation
+
+    rng = np.random.default_rng(seed)
+    T = np.tile(np.eye(4), (n, 1, 1))
+    rotvecs = np.deg2rad(rotation_deg) * rng.normal(size=(n, 3))
+    T[:, :3, :3] = Rotation.from_rotvec(rotvecs).as_matrix()
+    T[:, :3, 3] = translation * rng.normal(size=(n, 3))
+    return T
+
+
+def robustness(
+    poses: FloatArray,
+    mesh_path: Path,
+    surface: FloatArray,
+    gripper: Gripper,
+    *,
+    samples: int = 16,
+    translation: float = 3.0,
+    rotation_deg: float = 3.0,
+    seed: int = 0,
+) -> FloatArray:
+    """Share of small object pose errors under which each grasp (grasp -> model) still succeeds.
+
+    The object is moved by `samples` rigid motions about its origin while the grasp stays where it
+    was planned: the situation of a grasp planned from a slightly wrong pose estimate.
+    """
+    motions = perturbations(samples, translation=translation, rotation_deg=rotation_deg, seed=seed)
+    deltas = np.linalg.inv(motions)
+    out = np.zeros(len(poses))
+    for i, grasp in enumerate(poses):
+        moved = deltas @ grasp  # the grasp relative to each moved object
+        free = moved[~collides_many(moved, surface, gripper)]
+        held = sum(o.success for o in close_on_many(free, mesh_path, gripper)) if len(free) else 0
+        out[i] = held / samples
+    return out
 
 
 def _frames(centres: FloatArray, axes: FloatArray, approaches: int) -> FloatArray:
@@ -199,6 +273,7 @@ def synthesize(
     max_grasps: int = 3000,
     seed: int = 0,
     surface: FloatArray | None = None,
+    robustness_samples: int = 16,
 ) -> GraspSet:
     """Antipodal grasps on a CAD model.
 
@@ -207,13 +282,14 @@ def synthesize(
     approach directions around their closing axis. A candidate is kept when the same test that
     judges planned grasps (`judge` without a scene) succeeds on the model; pass the `surface`
     samples the judge will use, so that a grasp planned from the true pose never collides with
-    the object.
+    the object. Each kept grasp is then scored for robustness to small pose errors.
     """
     import open3d as o3d
 
     gripper = gripper or Gripper()
     mesh = o3d.io.read_triangle_mesh(mesh_path)
     mesh.compute_triangle_normals()
+    o3d.utility.random.seed(seed)  # the sampling draws from Open3D's global generator
     pcd = mesh.sample_points_poisson_disk(samples, init_factor=3, use_triangle_normal=True)
     points = np.asarray(pcd.points, dtype=float)
     normals = np.asarray(pcd.normals, dtype=float)
@@ -238,16 +314,20 @@ def synthesize(
     if surface is None:
         surface = np.asarray(mesh.sample_points_uniformly(4000).points, dtype=float)
     keep: list[int] = []
-    for i in order:
+    for chunk in np.array_split(order, max(1, len(order) // 64)):
         if len(keep) >= max_grasps:
             break
-        if (
-            not collides(frames[i], surface, gripper)
-            and close_on(frames[i], mesh_path, gripper).success
-        ):
-            keep.append(int(i))
-    idx = np.asarray(keep, dtype=int)
-    return GraspSet(frames[idx], widths[idx], quality[idx])
+        free = chunk[~collides_many(frames[chunk], surface, gripper)]
+        if len(free):
+            held = close_on_many(frames[free], mesh_path, gripper)
+            keep += [int(i) for i, o in zip(free, held, strict=True) if o.success]
+    idx = np.asarray(keep[:max_grasps], dtype=int)
+    robust = None
+    if robustness_samples:
+        robust = robustness(
+            frames[idx], mesh_path, surface, gripper, samples=robustness_samples, seed=seed
+        )
+    return GraspSet(frames[idx], widths[idx], quality[idx], robust)
 
 
 # ---- planning in the scene ---------------------------------------------------------------------
@@ -260,6 +340,8 @@ class Plan:
     feasible: int  # of those, collision-free in the scene
     score: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict)
+    ranked: FloatArray = field(default_factory=lambda: np.empty((0, 4, 4)))  # best first
+    widths: FloatArray = field(default_factory=lambda: np.empty(0))  # of the ranked grasps
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +350,8 @@ class Planner:
     max_approach_angle: float = 60.0  # degrees between approach and the camera ray
     surface_margin: float = 8.0  # scene points this close to the posed model belong to it
     reach: float = 160.0  # obstacles further than this beyond the object radius are ignored
+    keep: int = 10  # feasible grasps returned in rank order (a robot tries them in turn)
+    ranking: str = "robust"  # "robust" | "nominal"
 
     def plan(
         self,
@@ -282,9 +366,12 @@ class Planner:
 
         surface: model-frame surface samples; scene: camera-frame points of the whole depth image.
         Scene points away from the posed surface are obstacles. Grasps must approach from the
-        camera's side; the feasible ones are ranked by approach angle, clearance to the obstacles
-        and friction margin (weights 0.5, 0.3, 0.2).
+        camera's side. Ranking "robust" orders the feasible grasps by robustness to pose errors,
+        approach angle and clearance to the obstacles (weights 0.6, 0.2, 0.2); "nominal" by
+        approach angle, clearance and friction margin (0.5, 0.3, 0.2), ignoring pose errors.
         """
+        if self.ranking not in {"robust", "nominal"}:
+            raise ValueError(f"unknown ranking '{self.ranking}' (robust | nominal)")
         if len(grasps) == 0:
             return Plan(None, 0, 0)
         frames = pose @ grasps.poses
@@ -308,17 +395,20 @@ class Planner:
                 clearance[j] = min(50.0, float(d.min()))
         if not free.any():
             return Plan(None, len(facing), 0)
-        score = (
-            0.5 * alignment[facing]
-            + 0.3 * np.clip(clearance, 0, 20) / 20
-            + 0.2 * grasps.quality[facing]
-        )
+        free_space = np.clip(clearance, 0, 20) / 20
+        if self.ranking == "robust" and grasps.robustness is not None:
+            score = 0.6 * grasps.robustness[facing] + 0.2 * alignment[facing] + 0.2 * free_space
+        else:
+            score = 0.5 * alignment[facing] + 0.3 * free_space + 0.2 * grasps.quality[facing]
         score = np.where(free, score, -np.inf)
-        best = int(np.argmax(score))
+        order = np.argsort(-score, kind="stable")[: min(self.keep, int(free.sum()))]
+        best = int(order[0])
         return Plan(
             frames[facing[best]],
             len(facing),
             int(free.sum()),
             float(score[best]),
             {"width": float(grasps.widths[facing[best]]), "clearance": float(clearance[best])},
+            frames[facing[order]],
+            grasps.widths[facing[order]],
         )

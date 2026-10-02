@@ -1,0 +1,60 @@
+name: ROS 2
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ros-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  jazzy:
+    name: colcon build and test (Jazzy)
+    runs-on: ubuntu-24.04
+    container: ros:jazzy-ros-base
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      PIP_BREAK_SYSTEM_PACKAGES: "1"  # the container's system Python is ROS's Python
+    steps:
+      - uses: actions/checkout@v5
+      - name: System packages
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends python3-pip libegl1 libgl1 libgomp1 zstd
+          echo "POSEGRASP_DATA_DIR=$GITHUB_WORKSPACE/data" >> "$GITHUB_ENV"
+      - name: ROS dependencies
+        run: |
+          rosdep update --rosdistro jazzy
+          rosdep install --from-paths ros --ignore-src -y --rosdistro jazzy
+          apt-get install -y -q --no-install-recommends ros-jazzy-ros2-controllers
+      # ROS Jazzy's message packages are compiled against numpy 1.x: keep it, and an OpenCV build
+      # that supports it.
+      - name: posegrasp library
+        run: python3 -m pip install -e . "numpy<2" "opencv-contrib-python-headless<4.11"
+      - uses: actions/cache@v5
+        with:
+          path: data/raw
+          key: lmo-bop19-v1
+      - run: posegrasp data
+      - uses: actions/cache@v5
+        with:
+          path: data/grasps
+          key: grasps-${{ hashFiles('src/posegrasp/grasp.py', 'src/posegrasp/picking.py', 'src/posegrasp/geometry.py') }}
+      - name: Build
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build --base-paths ros --event-handlers console_cohesion+ \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release
+      - name: Test
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          colcon test --base-paths ros --event-handlers console_cohesion+ \
+            --pytest-args -v -s
+          colcon test-result --verbose
