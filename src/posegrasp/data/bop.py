@@ -95,6 +95,12 @@ class ObjectModel:
     diameter: float  # millimetres
     symmetries_discrete: tuple[FloatArray, ...] = ()  # 4x4 model-frame transforms
     symmetries_continuous: tuple[dict[str, Any], ...] = ()  # {"axis": [...], "offset": [...]}
+    eval_mesh_path: Path | None = None  # BOP evaluation model (models_eval/), when provided
+
+    @property
+    def eval_mesh(self) -> Path:
+        """The mesh the official metrics are computed on."""
+        return self.eval_mesh_path or self.mesh_path
 
     @property
     def is_symmetric(self) -> bool:
@@ -122,6 +128,7 @@ class Dataset:
         models = {}
         for key, entry in info.items():
             obj_id = int(key)
+            eval_mesh = self.root / "models_eval" / f"obj_{obj_id:06d}.ply"
             models[obj_id] = ObjectModel(
                 obj_id=obj_id,
                 mesh_path=self.root / "models" / f"obj_{obj_id:06d}.ply",
@@ -131,6 +138,7 @@ class Dataset:
                     for s in entry.get("symmetries_discrete", [])
                 ),
                 symmetries_continuous=tuple(entry.get("symmetries_continuous", [])),
+                eval_mesh_path=eval_mesh if eval_mesh.exists() else None,
             )
         return models
 
