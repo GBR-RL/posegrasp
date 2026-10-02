@@ -361,7 +361,7 @@ class SceneSetup:
             load_vertices(models[g.obj_id].eval_mesh) @ g.pose.R.T + g.pose.t for g in frame.gt
         ]
         base = base_in_camera(frame.depth_mm(), frame.camera.K, centre=centre, objects=vertices)
-        world_from_camera = np.linalg.inv(base)
+        world_from_camera: FloatArray = np.asarray(np.linalg.inv(base), dtype=np.float64)
         objects = {}
         for g in frame.gt:
             T = world_from_camera @ g.pose.matrix()

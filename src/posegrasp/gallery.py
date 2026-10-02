@@ -121,7 +121,7 @@ def render_case(dataset: Dataset, case: Case, *, size: int = 240) -> NDArray[np.
     union = np.logical_or.reduce([mask for mask, _ in poses])
     ys, xs = np.nonzero(union)
     cx, cy = (int(xs.min()) + int(xs.max())) // 2, (int(ys.min()) + int(ys.max())) // 2
-    half = int(max(int(xs.ptp()), int(ys.ptp()), 80) * 0.6)
+    half = int(max(int(np.ptp(xs)), int(np.ptp(ys)), 80) * 0.6)
     padded = cv2.copyMakeBorder(image, half, half, half, half, cv2.BORDER_CONSTANT, value=0)
     crop = padded[cy : cy + 2 * half, cx : cx + 2 * half]  # centred on (cx, cy), square
     return np.asarray(cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA), dtype=np.uint8)
