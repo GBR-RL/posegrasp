@@ -36,7 +36,9 @@ jobs:
       # ROS Jazzy's message packages are compiled against numpy 1.x: keep it, and an OpenCV build
       # that supports it.
       - name: posegrasp library
-        run: python3 -m pip install -e . "numpy<2" "opencv-contrib-python-headless<4.11"
+        run: >-
+          python3 -m pip install --ignore-installed -e .
+          "numpy<2" "opencv-contrib-python-headless<4.11"
       - uses: actions/cache@v5
         with:
           path: data/raw
