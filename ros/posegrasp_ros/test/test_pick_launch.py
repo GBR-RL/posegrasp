@@ -53,7 +53,7 @@ class TestPick(unittest.TestCase):
         node.create_subscription(
             String, "pick/result", lambda m: results.append(json.loads(m.data)), 10
         )
-        end = time.time() + 1200.0
+        end = time.time() + 900.0
         while time.time() < end and not results:
             rclpy.spin_once(node, timeout_sec=0.5)
         node.destroy_node()

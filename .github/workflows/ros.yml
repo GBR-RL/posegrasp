@@ -26,7 +26,7 @@ jobs:
       - name: System packages
         run: |
           apt-get update -q
-          apt-get install -y -q --no-install-recommends python3-pip libegl1 libgl1 libgomp1 zstd
+          apt-get install -y -q --no-install-recommends python3-pip libegl1 libgl1 libgomp1 libusb-1.0-0 zstd
           echo "POSEGRASP_DATA_DIR=$GITHUB_WORKSPACE/data" >> "$GITHUB_ENV"
       - name: ROS dependencies
         run: |

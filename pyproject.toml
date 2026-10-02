@@ -23,7 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 plots = ["matplotlib>=3.8"]
-sim = ["mujoco>=3.2"]
+sim = ["mujoco>=3.2", "coacd>=1.0", "imageio>=2.30"]
 dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
 
 [project.scripts]
@@ -52,7 +52,7 @@ ignore_missing_imports = true
 files = ["src/posegrasp"]
 
 [[tool.mypy.overrides]]
-module = ["open3d.*", "cv2.*", "trimesh.*", "mujoco.*"]
+module = ["open3d.*", "cv2.*", "trimesh.*", "mujoco.*", "coacd.*", "imageio.*"]
 follow_imports = "skip"
 follow_untyped_imports = false
 

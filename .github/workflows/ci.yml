@@ -26,7 +26,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           python: ${{ matrix.python }}
-          extras: dev,plots
+          extras: dev,plots,sim
           data: "false"
       # The official BOP toolkit, only for the metric cross-checks. Its pose_error module needs
       # numpy and scipy alone; --no-deps keeps its opencv-python from replacing opencv-contrib.

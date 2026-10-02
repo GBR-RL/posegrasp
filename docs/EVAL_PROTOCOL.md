@@ -81,12 +81,15 @@ fingertip, Coulomb friction μ = 0.5 (friction cone half-angle 26.6°).
    object along the inward normal to the opposite wall; the object width must leave 5 mm on
    each side within the stroke and both normals must lie inside the friction cone; 12 approach
    directions around each closing axis; up to 3000 grasps kept that pass the test in step 3 on
-   the model itself.
+   the model itself. Each grasp gets a **robustness** score: the share of 16 small object pose
+   errors (Gaussian, 3 mm and 3° per axis, fixed seed) under which it still passes that test.
 2. **Planning** from a pose estimate: the object's grasps are moved to the estimated pose. A grasp
    must approach within 60° of the camera ray. Scene points (every 2nd pixel) further than 8 mm
    from the posed model are obstacles; at most 3 may lie inside the open gripper. Feasible grasps
-   are ranked by 0.5 × approach alignment + 0.3 × clearance (capped at 20 mm, normalised) +
-   0.2 × friction margin; the best one is executed. No feasible grasp counts as a failure.
+   are ranked by 0.6 × robustness + 0.2 × approach alignment + 0.2 × clearance (capped at
+   20 mm, normalised); the best one is executed. No feasible grasp counts as a failure.
+   *Ablation* ("nominal" ranking, which ignores pose errors): 0.5 × approach alignment +
+   0.3 × clearance + 0.2 × friction margin.
 3. **Judging** on the true pose, which success means:
    - the open gripper does not collide with the object (its surface samples) nor with more than
      3 points of the rest of the scene (depth points outside the object's true visible mask),
@@ -100,8 +103,27 @@ Reported per method and condition: success rate over all targets (a missing pose
 the share of targets with a feasible plan, failure reasons, and success by the MSSD of the pose
 used (bins of 0.05, 0.1, 0.2 and 0.5 of the diameter).
 
+## Physics check
+
+A subset of the planned grasps is executed in MuJoCo (CPU): the Franka Hand of MuJoCo Menagerie
+(pinned commit), free-floating and driven by a mocap body, in the robot base frame on the fitted
+table plane. The objects of the image stand at their true poses, the target free (density
+400 kg/m³), the others fixed; collision shapes come from a CoACD convex decomposition of each
+CAD model (concavity 0.08, at most 12 parts). Friction μ = 0.5 everywhere, elliptic cones. A
+trial: 0.4 s settling (a target that moves more than 1 cm is reported as an unstable scene and
+left out), approach from 10 cm back along the approach axis in 1 s, close for 0.8 s, lift 10 cm
+in 1 s, hold 0.4 s. Success: the object rose by at least 5 cm and touches both fingers. Reported:
+physics success rate, and its agreement with the geometric judgement of step 3.
+
 ## Change log
 
-- 2026-10-02: frozen (this version). Earlier draft: AR over MSSD and MSPD only, errors on
+- 2026-10-02, before any full run: grasps ranked by robustness to pose errors. The first dev
+  run showed that nearly correct poses (MSSD < 5 % of the diameter) lost a third of the grasps
+  with the nominal ranking; on dev, robust ranking raised grasp success from 52.8 % to 70.8 %
+  (PPF, GT masks) and from 40.3 % to 58.3 % (FPFH), with the oracle unchanged at 93.8 %. The
+  nominal ranking is kept as an ablation. Open3D's random generator is now seeded for the model
+  and grasp sampling. FPFH's RANSAC stays nondeterministic across machines (it is
+  multi-threaded): dev AR 0.556 locally vs 0.489 on a CI runner; PPF 0.756 vs 0.736.
+- 2026-10-02: frozen. Earlier draft: AR over MSSD and MSPD only, errors on
   `models/`, ADD-S measured from the estimate to the true pose; all changed to match the official
   toolkit before any full run.
