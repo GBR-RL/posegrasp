@@ -40,11 +40,10 @@ def project(points: FloatArray, K: FloatArray) -> FloatArray:
 
 @dataclass(frozen=True, slots=True)
 class ModelCloud:
-    """Surface samples of a CAD model with normals, and the full vertex set for metrics."""
+    """Surface samples of a CAD model with normals."""
 
     points: FloatArray  # (N, 3) mm, uniform surface samples
     normals: FloatArray  # (N, 3) unit, outward
-    vertices: FloatArray  # (M, 3) mm, mesh vertices (BOP metrics are defined on these)
     diameter: float
 
 
@@ -60,12 +59,26 @@ def load_model(mesh_path: Path, diameter: float, n_samples: int = 6000) -> Model
     mesh.compute_triangle_normals()
     mesh.compute_vertex_normals()
     pcd = mesh.sample_points_poisson_disk(n_samples, init_factor=3)
+    # Normals are interpolated from the vertex normals, so they are shorter than 1 where the
+    # surface bends between vertices.
+    normals = np.asarray(pcd.normals, dtype=float)
+    normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-12)
     return ModelCloud(
         points=np.asarray(pcd.points, dtype=float),
-        normals=np.asarray(pcd.normals, dtype=float),
-        vertices=np.asarray(mesh.vertices, dtype=float),
+        normals=normals,
         diameter=diameter,
     )
+
+
+@lru_cache(maxsize=32)
+def load_vertices(mesh_path: Path) -> FloatArray:
+    """Mesh vertices (mm); for the evaluation models these are what BOP errors are computed on."""
+    import open3d as o3d
+
+    mesh = o3d.io.read_triangle_mesh(mesh_path)
+    if mesh.is_empty():
+        raise FileNotFoundError(mesh_path)
+    return np.asarray(mesh.vertices, dtype=float)
 
 
 def to_open3d(points: FloatArray, normals: FloatArray | None = None) -> object:
