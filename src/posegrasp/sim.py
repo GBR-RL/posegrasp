@@ -2,11 +2,14 @@
 
 The Franka Hand of MuJoCo Menagerie floats in the robot base frame of posegrasp.scene (table at
 z = 0, z up), driven by a mocap body through a weld, with gravity compensated. The objects of the
-image stand at their true poses: the target as a free body, the others fixed, all with collision
-geometry from a CoACD convex decomposition of the CAD model. A trial executes one planned grasp:
-the scene settles, the open hand approaches from `approach` metres back along the approach axis,
-closes, and lifts by `lift` metres. It succeeds when the object rose by at least half the lift
-and still touches both fingers.
+image stand at their true poses as free bodies, with collision geometry from a CoACD convex
+decomposition of the CAD model, each held in place by a weld until the fingers have closed (the
+decompositions are not statically stable at the true poses, so free objects would drift before
+the grasp); then all are released, so a lifted object can push its neighbours aside.
+
+A trial executes one planned grasp: the open hand approaches from `approach` metres back along
+the approach axis and closes; the objects are released, and the hand lifts by `lift` metres. It
+succeeds when the object rose by at least half the lift and still touches both fingers.
 """
 
 from __future__ import annotations
@@ -41,6 +44,10 @@ HAND_FILES = (
 TCP_OFFSET = 0.1034  # hand frame -> between the finger pads, along z (m)
 GRASP_FORCE = 70.0  # N on the finger tendon (35 N per finger), as a Franka Hand grasp command
 FRICTION = 0.5  # as in the geometric grasp test
+# Torsional friction (m): finger pads are patches, not points, and resist twisting about the
+# closing axis; with point contacts (condim 3) a held object swings freely around that axis.
+TORSION = 0.005
+FRICTION_PARAMS = f"{FRICTION} {TORSION} 0.0001"
 DENSITY = 400.0  # kg/m^3: the LM-O objects are light plastic and ceramic figures
 
 
@@ -105,7 +112,7 @@ class SceneObject:
     obj_id: int
     pose: FloatArray  # 4x4 model -> world, metres
     parts: tuple[Path, ...]
-    free: bool = False  # the target
+    free: bool = False  # the target (all objects are free bodies; this one is grasped)
 
 
 COLOURS = ("0.84 0.47 0.16 1", "0.62 0.62 0.6 1")  # target, other objects
@@ -127,8 +134,7 @@ def _add_objects(world: ET.Element, objects: Sequence[SceneObject]) -> None:
             pos=_pos(obj.pose[:3, 3]),
             quat=_quat(obj.pose[:3, :3]),
         )
-        if obj.free:
-            ET.SubElement(body, "freejoint", name="target_free")
+        ET.SubElement(body, "freejoint", name="target_free" if obj.free else f"free_{obj.obj_id}")
         rgba = COLOURS[0] if obj.free else COLOURS[1]
         for i in range(len(obj.parts)):
             ET.SubElement(
@@ -145,7 +151,8 @@ def _floating_hand(hand: ET.Element, pose: FloatArray) -> ET.Element:
         part.set("gravcomp", "1")
     body.insert(0, ET.Element("freejoint", name="hand_free"))
     for geom in body.iter("geom"):
-        geom.set("friction", f"{FRICTION} 0.005 0.0001")
+        geom.set("friction", FRICTION_PARAMS)
+        geom.set("condim", "4")
     return body
 
 
@@ -196,8 +203,10 @@ def build_model_xml(
     ET.SubElement(visual, "headlight", ambient="0.45 0.45 0.45", diffuse="0.5 0.5 0.5")
     defaults = _required(hand, "default")
     object_class = ET.SubElement(defaults, "default", attrib={"class": "object"})
-    friction = f"{FRICTION} 0.005 0.0001"
-    ET.SubElement(object_class, "geom", type="mesh", friction=friction, density=str(DENSITY))
+    friction = FRICTION_PARAMS
+    ET.SubElement(
+        object_class, "geom", type="mesh", friction=friction, density=str(DENSITY), condim="4"
+    )
     root.append(defaults)
     asset = _required(hand, "asset")
     for obj in objects:
@@ -224,13 +233,16 @@ def build_model_xml(
     )  # fmt: skip
     world.append(_floating_hand(hand, hand_pose))
     _hand_mechanics(root, hand)
+    equality = _required(root, "equality")
+    for obj in objects:  # held at the true poses until the fingers close (released in PickTrial)
+        ET.SubElement(equality, "weld", name=f"hold_{obj.obj_id}", body1=f"obj_{obj.obj_id}")
     return ET.tostring(root, encoding="unicode")
 
 
 @dataclass
 class TrialResult:
     success: bool
-    reason: str  # "ok", "unstable_scene", "dropped", "not_lifted"
+    reason: str  # "ok", "dropped", "not_lifted"
     rise: float  # metres the object rose
     frames: list[NDArray[np.uint8]] = field(default_factory=list)
 
@@ -258,6 +270,9 @@ class PickTrial:
         self.approach = approach
         self.lift = lift
         self.target = int(self.model.joint("target_free").bodyid[0])
+        self.holds = [
+            i for i in range(self.model.neq) if self.model.equality(i).name.startswith("hold_")
+        ]
         self.fingers = {self.model.body(n).id for n in ("left_finger", "right_finger")}
         self.mocap = self.model.body("mocap").mocapid[0]
         self.actuator = self.model.actuator("actuator8").id
@@ -327,17 +342,16 @@ class PickTrial:
         self._set_mocap(pre)
         self.mujoco.mj_forward(self.model, self.data)
         start = self.data.xpos[self.target].copy()
-        self._run(0.4, record=record)
-        settled = self.data.xpos[self.target].copy()
-        if np.linalg.norm(settled - start) > 0.01:
-            return TrialResult(False, "unstable_scene", 0.0, frames)
+        self._run(0.3, record=record)  # the fingers open
         at_grasp = self.hand_pose()
         self._run(1.0, start=pre, end=at_grasp, record=record)
-        self.data.ctrl[self.actuator] = 0  # close
+        self.data.ctrl[self.actuator] = 0  # close on the held object
         self._run(0.8, record=record)
+        self.data.eq_active[self.holds] = 0  # release: the target hangs on the fingers now
+        self._run(0.3, record=record)
         self._run(1.0, start=at_grasp, end=self.hand_pose(rise=self.lift), record=record)
         self._run(0.4, record=record)
-        rise = float(self.data.xpos[self.target][2] - settled[2])
+        rise = float(self.data.xpos[self.target][2] - start[2])
         if rise < self.lift / 2:
             return TrialResult(False, "not_lifted", rise, frames)
         if not self._touches_both_fingers():
