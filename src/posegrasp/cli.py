@@ -196,5 +196,23 @@ def pick(
     typer.echo(json.dumps(summarize_grasps(done_rows), indent=2))
 
 
+@app.command("report")
+def report(
+    results_dir: Annotated[Path | None, typer.Option()] = None,
+    subset: Annotated[str, typer.Option(help="dev | all")] = "all",
+    latency_dir: Annotated[
+        Path | None, typer.Option(help="Pose rows of the single-machine latency run")
+    ] = None,
+    out: Annotated[Path, typer.Option()] = Path("reports/benchmark"),
+    charts: Annotated[bool, typer.Option(help="Render the PNG charts (needs matplotlib)")] = True,
+) -> None:
+    """Merges all runs and shards into results.md, summary.json, BOP CSV files and charts."""
+    from posegrasp.report import build, write
+
+    data = build(results_dir or get_settings().results_dir, subset=subset, latency=latency_dir)
+    for path in write(data, out, charts=charts):
+        typer.echo(str(path))
+
+
 if __name__ == "__main__":
     app()

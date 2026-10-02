@@ -23,19 +23,15 @@ jobs:
         python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/setup
         with:
-          python-version: ${{ matrix.python }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - name: System libraries for Open3D
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libegl1 libgl1 libgomp1
-      - name: Install
-        run: |
-          python -m pip install -e ".[dev]"
-          # The official BOP toolkit, only for the metric cross-checks. Its pose_error module needs
-          # numpy and scipy alone; --no-deps keeps its opencv-python from replacing opencv-contrib.
-          python -m pip install --no-deps "bop_toolkit_lib @ git+https://github.com/thodan/bop_toolkit.git@${{ env.BOP_TOOLKIT_COMMIT }}"
+          python: ${{ matrix.python }}
+          extras: dev,plots
+          data: "false"
+      # The official BOP toolkit, only for the metric cross-checks. Its pose_error module needs
+      # numpy and scipy alone; --no-deps keeps its opencv-python from replacing opencv-contrib.
+      - name: BOP toolkit (pinned)
+        run: python -m pip install --no-deps "bop_toolkit_lib @ git+https://github.com/thodan/bop_toolkit.git@${BOP_TOOLKIT_COMMIT}"
       - name: Ruff
         run: |
           ruff check .
@@ -50,19 +46,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/setup
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - name: System libraries for Open3D
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libegl1 libgl1 libgomp1
-      - run: python -m pip install -e ".[dev]"
-      # ~140 MB from the BOP Hugging Face mirror, downloaded once and restored from the cache.
-      - uses: actions/cache@v5
-        with:
-          path: data/raw
-          key: lmo-bop19-v1
-      - run: posegrasp data
+          extras: dev
       - run: posegrasp info
       - run: pytest -m dataset

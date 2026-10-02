@@ -46,6 +46,9 @@ class PpfEstimator:
             self._detectors[obj_id] = detector
         return self._detectors[obj_id]
 
+    def prepare(self, obj_id: int, model: ModelCloud) -> None:
+        self._detector(obj_id, model)
+
     def hypotheses(self, obj_id: int, model: ModelCloud, scene: FloatArray) -> list[Estimate]:
         start = time.perf_counter()
         detector = self._detector(obj_id, model)

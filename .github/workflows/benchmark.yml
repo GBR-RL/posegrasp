@@ -1,0 +1,123 @@
+name: Benchmark
+
+# The full benchmark on free GitHub-hosted runners: both pose methods under the three detection
+# inputs, each split into image shards, then the grasp experiment on every pose, the oracle
+# (grasps planned from the true pose), a latency run of both methods on one machine, and the
+# merged report. Settings are frozen in docs/EVAL_PROTOCOL.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      subset:
+        description: "Images: all (200) or dev (20)"
+        type: choice
+        options: [all, dev]
+        default: all
+
+env:
+  SUBSET: ${{ inputs.subset }}
+  SHARDS: 6
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  prepare:
+    name: Data and grasps
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - name: Grasps per object (cached by the grasp code)
+        uses: actions/cache@v5
+        with:
+          path: data/grasps
+          key: grasps-${{ hashFiles('src/posegrasp/grasp.py', 'src/posegrasp/picking.py', 'src/posegrasp/geometry.py') }}
+      - run: posegrasp grasps
+
+  shard:
+    name: ${{ matrix.method }} / ${{ matrix.condition }} / shard ${{ matrix.shard }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        method: [ppf-score, fpfh-verify-r5, oracle]
+        condition: [gt, gdrnpp, cnos]
+        shard: [0, 1, 2, 3, 4, 5]
+        include:
+          - method: ppf-score
+            args: --estimator ppf --selection score
+          - method: fpfh-verify-r5
+            args: --estimator fpfh --selection verify --restarts 5
+        exclude:  # the oracle plans from the true pose: no detection input
+          - method: oracle
+            condition: gdrnpp
+          - method: oracle
+            condition: cnos
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - uses: actions/cache/restore@v5
+        with:
+          path: data/grasps
+          key: grasps-${{ hashFiles('src/posegrasp/grasp.py', 'src/posegrasp/picking.py', 'src/posegrasp/geometry.py') }}
+      - name: Pose estimation
+        if: matrix.method != 'oracle'
+        run: >-
+          posegrasp eval ${{ matrix.args }} --condition ${{ matrix.condition }}
+          --subset $SUBSET --shard ${{ matrix.shard }}/$SHARDS
+      - name: Grasp experiment
+        run: >-
+          posegrasp pick --method ${{ matrix.method }} --condition ${{ matrix.condition }}
+          --subset $SUBSET --shard ${{ matrix.shard }}/$SHARDS
+      - uses: actions/upload-artifact@v5
+        with:
+          name: results-${{ matrix.method }}-${{ matrix.condition }}-${{ matrix.shard }}
+          path: results/
+          retention-days: 30
+
+  latency:
+    name: Latency, both methods on one machine
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - run: |
+          lscpu | grep -E "Model name|^CPU\(s\)" | tee latency-machine.txt
+          posegrasp eval --estimator ppf --selection score --condition gt --subset dev --results-dir latency
+          posegrasp eval --estimator fpfh --selection verify --restarts 5 --condition gt --subset dev --results-dir latency
+          mv latency-machine.txt latency/
+      - uses: actions/upload-artifact@v5
+        with:
+          name: latency
+          path: latency/
+          retention-days: 30
+
+  report:
+    name: Report
+    needs: [shard, latency]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+        with:
+          extras: plots
+          data: "false"
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: results-*
+          path: results
+          merge-multiple: true
+      - uses: actions/download-artifact@v5
+        with:
+          name: latency
+          path: latency
+      - run: posegrasp report --subset $SUBSET --latency-dir latency --out reports/benchmark
+      - run: cp latency/latency-machine.txt reports/benchmark/
+      - run: cat reports/benchmark/results.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-report
+          path: reports/benchmark/
+          retention-days: 90
