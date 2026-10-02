@@ -1,0 +1,42 @@
+name: Set up posegrasp
+description: Python, the system libraries Open3D needs, the package, and (optionally) LM-O.
+
+inputs:
+  python:
+    description: Python version
+    default: "3.12"
+  extras:
+    description: Comma-separated optional dependencies to install with the package
+    default: ""
+  data:
+    description: Download LM-O and the default detections (cached)
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python }}
+        cache: pip
+        cache-dependency-path: pyproject.toml
+    - name: System libraries for Open3D
+      shell: bash
+      run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libegl1 libgl1 libgomp1
+    - name: Install
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.extras }}" ]; then
+          python -m pip install -e ".[${{ inputs.extras }}]"
+        else
+          python -m pip install -e .
+        fi
+    # ~140 MB from the BOP Hugging Face mirror, downloaded once and restored from the cache.
+    - if: inputs.data == 'true'
+      uses: actions/cache@v5
+      with:
+        path: data/raw
+        key: lmo-bop19-v1
+    - if: inputs.data == 'true'
+      shell: bash
+      run: posegrasp data

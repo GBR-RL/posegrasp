@@ -29,6 +29,10 @@ class Estimate:
 class PoseEstimator(Protocol):
     name: str
 
+    def prepare(self, obj_id: int, model: ModelCloud) -> None:
+        """Offline work per object (model features, training); excluded from the latency."""
+        ...
+
     def hypotheses(self, obj_id: int, model: ModelCloud, scene: FloatArray) -> list[Estimate]:
         """Refined pose hypotheses (model -> camera) from the segmented scene points, mm."""
         ...

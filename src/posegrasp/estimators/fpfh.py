@@ -35,17 +35,24 @@ class FpfhEstimator:
             o3d.geometry.KDTreeSearchParamHybrid(radius=self.feature_radius * voxel, max_nn=100),
         )
 
+    def _model(self, obj_id: int, model: ModelCloud) -> Any:
+        voxel = self.voxel_ratio * model.diameter
+        key = (obj_id, voxel)
+        if key not in self._models:
+            pcd = to_open3d(model.points, model.normals).voxel_down_sample(voxel)  # type: ignore[attr-defined]
+            self._models[key] = (pcd, self._features(pcd, voxel))
+        return self._models[key]
+
+    def prepare(self, obj_id: int, model: ModelCloud) -> None:
+        self._model(obj_id, model)
+
     def hypotheses(self, obj_id: int, model: ModelCloud, scene: FloatArray) -> list[Estimate]:
         import open3d as o3d
 
         reg = o3d.pipelines.registration
         start = time.perf_counter()
         voxel = self.voxel_ratio * model.diameter
-        key = (obj_id, voxel)
-        if key not in self._models:
-            pcd = to_open3d(model.points, model.normals).voxel_down_sample(voxel)  # type: ignore[attr-defined]
-            self._models[key] = (pcd, self._features(pcd, voxel))
-        model_pcd, model_feat = self._models[key]
+        model_pcd, model_feat = self._model(obj_id, model)
         scene_pcd = to_open3d(scene).voxel_down_sample(voxel)  # type: ignore[attr-defined]
         if len(scene_pcd.points) < 10:
             return []

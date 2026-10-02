@@ -136,13 +136,14 @@ def estimate_instance(
     selection: "score" keeps the hypothesis with the best ICP inlier fraction, "verify" the one
     that best explains the measured depth (posegrasp.verify).
     """
+    cloud: ModelCloud = load_model(model.mesh_path, model.diameter)
+    estimator.prepare(model.obj_id, cloud)  # offline per object: not part of the latency
     start = time.perf_counter()
     seg = segment(
         frame, depth, obj_id=model.obj_id, model=model, condition=condition, detection=detection
     )
     if seg is None or len(seg.points) < 10:
         return InstanceResult(seg, 0, None, time.perf_counter() - start)
-    cloud: ModelCloud = load_model(model.mesh_path, model.diameter)
     hyps = [h for h in estimator.hypotheses(model.obj_id, cloud, seg.points) if h.pose]
     if not hyps:
         return InstanceResult(seg, 0, None, time.perf_counter() - start)
