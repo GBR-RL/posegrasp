@@ -123,7 +123,6 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           extras: plots
-          data: "false"
       - uses: actions/download-artifact@v5
         with:
           pattern: results-*
@@ -134,6 +133,7 @@ jobs:
           name: latency
           path: latency
       - run: posegrasp report --subset $SUBSET --latency-dir latency --out reports/benchmark
+      - run: posegrasp gallery --subset $SUBSET --out reports/benchmark/failures.png
       - run: cp latency/latency-machine.txt reports/benchmark/
       - run: cat reports/benchmark/results.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v5
