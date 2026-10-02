@@ -156,13 +156,20 @@ def pick(
     condition: Annotated[str, typer.Option(help="gt | gdrnpp | cnos")] = "gt",
     subset: Annotated[str, typer.Option(help="dev | all")] = "dev",
     shard: Annotated[str | None, typer.Option(help="INDEX/COUNT of the targeted images")] = None,
+    ranking: Annotated[
+        str, typer.Option(help="robust (to pose errors) | nominal (ignores them)")
+    ] = "robust",
     data_dir: DataDirOpt = None,
     results_dir: Annotated[Path | None, typer.Option()] = None,
 ) -> None:
     """Plans a grasp from each pose estimate and judges it on the true pose; resumable."""
     from posegrasp.data.bop import Dataset
+    from posegrasp.grasp import Planner
     from posegrasp.picking import evaluate_grasps, grasp_sets, summarize_grasps
     from posegrasp.pipeline import load_rows
+
+    planner = Planner(ranking=ranking)  # validates the ranking name
+    suffix = "grasp.jsonl" if ranking == "robust" else f"grasp-{ranking}.jsonl"
 
     settings = get_settings()
     base = data_dir or settings.data_dir
@@ -176,12 +183,12 @@ def pick(
             for t in targets
             for _ in range(t.inst_count)
         ]
-        out = root / "oracle" / f"{name}.grasp.jsonl"
+        out = root / "oracle" / f"{name}.{suffix}"
     else:
         rows = load_rows(root / method / condition / f"{name}.jsonl")
         if not rows:
             raise typer.BadParameter(f"no pose results in {root / method / condition}/{name}.jsonl")
-        out = root / method / condition / f"{name}.grasp.jsonl"
+        out = root / method / condition / f"{name}.{suffix}"
     out.parent.mkdir(parents=True, exist_ok=True)
     done_rows = load_rows(out)
     done = {(r["scene_id"], r["im_id"], r["obj_id"]) for r in done_rows}
@@ -189,7 +196,7 @@ def pick(
     typer.echo(f"pick {method}/{condition}: {len(rows)} poses, {len(todo)} to go -> {out}")
     sets = grasp_sets(ds.models(), base / "grasps", log=True)
     with out.open("a", encoding="utf-8") as f:
-        for row in evaluate_grasps(ds, todo, grasps=sets, oracle=oracle):
+        for row in evaluate_grasps(ds, todo, grasps=sets, planner=planner, oracle=oracle):
             f.write(json.dumps(row) + "\n")
             f.flush()
             done_rows.append(row)

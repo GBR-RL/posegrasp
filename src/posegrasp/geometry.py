@@ -58,6 +58,7 @@ def load_model(mesh_path: Path, diameter: float, n_samples: int = 6000) -> Model
         raise FileNotFoundError(mesh_path)
     mesh.compute_triangle_normals()
     mesh.compute_vertex_normals()
+    o3d.utility.random.seed(0)  # the sampling draws from Open3D's global generator
     pcd = mesh.sample_points_poisson_disk(n_samples, init_factor=3)
     # Normals are interpolated from the vertex normals, so they are shorter than 1 where the
     # surface bends between vertices.
