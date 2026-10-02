@@ -1,0 +1,51 @@
+name: Report
+
+# Rebuilds the benchmark report (tables, charts, BOP files) and the failure gallery from the
+# results of a finished benchmark run, without running the benchmark again.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Benchmark run whose results to use"
+        required: true
+      subset:
+        description: "Images of that run"
+        type: choice
+        options: [all, dev]
+        default: all
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+        with:
+          extras: plots
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: results-*
+          path: results
+          merge-multiple: true
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v5
+        with:
+          name: latency
+          path: latency
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - run: |
+          posegrasp report --subset ${{ inputs.subset }} --latency-dir latency --out reports/benchmark
+          cp latency/latency-machine.txt reports/benchmark/
+          posegrasp gallery --subset ${{ inputs.subset }} --out reports/benchmark/failures.png
+      - uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-report
+          path: reports/benchmark/
+          retention-days: 90

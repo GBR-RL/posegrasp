@@ -300,8 +300,8 @@ def success_by_error_chart(report: dict[str, Any], theme: str, path: Path) -> Pa
     chart = _Chart(
         t,
         title="What a pose error costs in grasps",
-        subtitle="Grasp success by the error of the pose it was planned from (MSSD / "
-        "object diameter); all methods and detections pooled",
+        subtitle="Grasp success by the error (MSSD / object diameter) of the pose it was "
+        "planned from; all runs pooled",
     )
     labels = [f"{k}\n(n={v['n']})" for k, v in bins.items()]
     values = [v["success_rate"] for v in bins.values()]
@@ -349,7 +349,7 @@ def visibility_chart(report: dict[str, Any], theme: str, path: Path) -> Path | N
             )
         ax.set_ylim(0, 1)
         ax.set_xlim(-0.4, len(x) - 0.6)
-        ax.set_xticks(x, [b.replace("-", chr(0x2013)) for b in VISIBILITY_LABELS], fontsize=8)
+        ax.set_xticks(x, [b.replace("-", chr(0x2013)) for b in VISIBILITY_LABELS], fontsize=7.5)
         ax.set_title(name, color=t["ink2"], fontsize=9.5, loc="left", pad=8)
         _ar_ticks(ax)
         if ax is not chart.axes[0]:
