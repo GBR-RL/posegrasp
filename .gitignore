@@ -10,6 +10,7 @@ __pycache__/
 data/raw/
 data/lmo/
 data/detections/
+data/grasps/
 results/
 
 # ROS 2 build trees
