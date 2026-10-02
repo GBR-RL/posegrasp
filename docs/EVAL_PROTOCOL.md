@@ -105,18 +105,26 @@ used (bins of 0.05, 0.1, 0.2 and 0.5 of the diameter).
 
 ## Physics check
 
-A subset of the planned grasps is executed in MuJoCo (CPU): the Franka Hand of MuJoCo Menagerie
-(pinned commit), free-floating and driven by a mocap body, in the robot base frame on the fitted
-table plane. The objects of the image stand at their true poses, the target free (density
-400 kg/m³), the others fixed; collision shapes come from a CoACD convex decomposition of each
-CAD model (concavity 0.08, at most 12 parts). Friction μ = 0.5 everywhere, elliptic cones. A
-trial: 0.4 s settling (a target that moves more than 1 cm is reported as an unstable scene and
-left out), approach from 10 cm back along the approach axis in 1 s, close for 0.8 s, lift 10 cm
-in 1 s, hold 0.4 s. Success: the object rose by at least 5 cm and touches both fingers. Reported:
-physics success rate, and its agreement with the geometric judgement of step 3.
+Every planned grasp (robust ranking) is executed in MuJoCo (CPU): the Franka Hand of MuJoCo
+Menagerie (pinned commit), free-floating and driven by a mocap body, in the robot base frame on
+the table plane (fitted to the depth, then refined through the objects' lowest points). The
+objects of the image stand at their true poses as free bodies (density 400 kg/m³) with collision
+shapes from a CoACD convex decomposition of each CAD model (concavity 0.08, at most 12 parts),
+held in place by welds until the fingers have closed. Friction μ = 0.5 with torsional friction
+(pads are patches, not points), elliptic cones; the grasp squeezes with 70 N. A trial: open the
+hand at 10 cm back along the approach axis, approach in 1 s, close for 0.8 s, release the
+objects, lift 10 cm in 1 s, hold 0.4 s. Success: the object rose by at least 5 cm and touches
+both fingers. Reported: physics success rate, and its agreement with the geometric judgement of
+step 3.
 
 ## Change log
 
+- 2026-10-02, before any full run: physics check reworked on the dev images. Free objects at
+  their true poses drifted 3-70 mm while settling (convex decompositions are not statically
+  stable), so a third of the trials had to be discarded; objects are now held by welds until
+  the fingers close. Fixed neighbours made lifted objects scrape out of the grasp; all objects
+  are now free after release. Torsional friction added. Oracle physics success on dev: 70.7 %
+  -> 83.3 %, agreement with the geometric test 75.8 % -> 86.8 %.
 - 2026-10-02, before any full run: grasps ranked by robustness to pose errors. The first dev
   run showed that nearly correct poses (MSSD < 5 % of the diameter) lost a third of the grasps
   with the nominal ranking; on dev, robust ranking raised grasp success from 52.8 % to 70.8 %
