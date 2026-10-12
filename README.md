@@ -4,8 +4,10 @@
 from RGB-D, plans a parallel-jaw grasp from the pose, and checks whether the grasp would have
 worked on the object where it really is: geometrically, in MuJoCo physics, and as a ROS 2 / MoveIt 2
 pick. Every stage is measured on the public BOP benchmark (LM-O, 200 cluttered images, 1445
-object instances) with the official metrics, on CPU only, by a GitHub Actions workflow anyone can
-rerun.
+object instances) with the official metrics, by a GitHub Actions workflow anyone can rerun. The
+pose estimators are geometric (point pair features, FPFH, ICP), so the pipeline needs no GPU and
+runs on the robot's own computer or an edge box; the 2D detections can come from any detector,
+including GPU-based ones.
 
 [![CI](https://github.com/GBR-RL/posegrasp/actions/workflows/ci.yml/badge.svg)](https://github.com/GBR-RL/posegrasp/actions/workflows/ci.yml)
 [![ROS 2](https://github.com/GBR-RL/posegrasp/actions/workflows/ros.yml/badge.svg)](https://github.com/GBR-RL/posegrasp/actions/workflows/ros.yml)
@@ -157,7 +159,8 @@ reports/benchmark/ the committed report of the full run
 
 ## Limits
 
-- One dataset (LM-O: 8 objects, one scene); classical estimators only, no learned ones (CPU).
+- One dataset (LM-O: 8 objects, one scene); geometric pose estimators only, no learned pose
+  networks.
 - Pose errors are measured exactly; grasp success is a model: the gripper is three boxes for the
   geometric test, the physics check uses a floating hand rather than the arm, and objects other
   than the target stay fixed. The robot base is placed on the table plane fitted from the data
